@@ -3,7 +3,7 @@ import 'dart:io';
 const MEMORY_SIZE = 1 << 16;
 var memory = List.filled(MEMORY_SIZE, 0);
 
-enum RegisterValue {
+enum RegisterAddress {
   R_R0,
   R_R1,
   R_R2,
@@ -52,7 +52,6 @@ extension Condition on ConditionFlags {
       case ConditionFlags.FL_NEG:
         return 1 << 2;
     }
-    return 0;
   }
 }
 
@@ -92,7 +91,7 @@ enum MemoryMappedRegister {
 }
 
 const PC_START = 0x3000;
-var register = <RegisterValue, int>{}..addAll(RegisterValue.values.asMap().map((key, value) => MapEntry(value, key)));
+var register = <RegisterAddress, int>{}..addAll(RegisterAddress.values.asMap().map((key, value) => MapEntry(value, key)));
 
 void main(List<String> arguments) {
   if (arguments.isEmpty) {
@@ -109,26 +108,28 @@ void main(List<String> arguments) {
     }
   }
 
-  register[RegisterValue.R_PC] = PC_START;
+  register[RegisterAddress.R_PC] = PC_START;
 
-  stdin.lineMode = false;
+  // stdin.lineMode = false;
 
   var isRunning = true;
 
   while (isRunning) {
-    var instr = mem_read(register[RegisterValue.R_PC]++);
+    var pc = register[RegisterAddress.R_PC]!;
+    register[RegisterAddress.R_PC] = pc + 1;
+    var instr = mem_read(pc);
     var op = Opcode.values[instr >> 12];
 
-    // print('$op ${instr.toRadixString(2).padLeft(16, '0')}');
+    print('$op ${instr.toRadixString(2).padLeft(16, '0')}');
 
     switch (op) {
       case Opcode.OP_BR:
         {
           var nzp = (instr >> 9) & 0x7;
           var pc_offset = sign_extend(instr & 0x1FF, 9);
-          if (nzp & register[RegisterValue.R_COND] > 0) {
-            register[RegisterValue.R_PC] += pc_offset;
-            register[RegisterValue.R_PC] &= 0xFFFF;
+          if (nzp & register[RegisterAddress.R_COND]! > 0) {
+            register[RegisterAddress.R_PC] = register[RegisterAddress.R_PC]! + pc_offset;
+            register[RegisterAddress.R_PC] = register[RegisterAddress.R_PC]! & 0xFFFF;
           }
         }
         break;
@@ -140,13 +141,13 @@ void main(List<String> arguments) {
 
           if (imm_flag == 1) {
             var imm5 = sign_extend(instr & 0x1F, 5);
-            register[RegisterValue.values[r0]] = register[RegisterValue.values[r1]] + imm5;
+            register[RegisterAddress.values[r0]] = register[RegisterAddress.values[r1]]! + imm5;
           } else {
             var r2 = instr & 0x7;
-            register[RegisterValue.values[r0]] = register[RegisterValue.values[r1]] + register[RegisterValue.values[r2]];
+            register[RegisterAddress.values[r0]] = register[RegisterAddress.values[r1]]! + register[RegisterAddress.values[r2]]!;
           }
 
-          register[RegisterValue.values[r0]] &= 0xFFFF;
+          register[RegisterAddress.values[r0]] = register[RegisterAddress.values[r0]]! & 0xFFFF;
 
           update_flags(r0);
         }
@@ -155,10 +156,10 @@ void main(List<String> arguments) {
         {
           var r0 = (instr >> 9) & 0x7;
           var pc_offset = sign_extend(instr & 0x1FF, 9);
-          var address = register[RegisterValue.R_PC] + pc_offset;
+          var address = register[RegisterAddress.R_PC]! + pc_offset;
           address &= 0xFFFF;
 
-          register[RegisterValue.values[r0]] = mem_read(address);
+          register[RegisterAddress.values[r0]] = mem_read(address);
           update_flags(r0);
         }
         break;
@@ -166,24 +167,24 @@ void main(List<String> arguments) {
         {
           var r0 = (instr >> 9) & 0x7;
           var pc_offset = sign_extend(instr & 0x1FF, 9);
-          var address = register[RegisterValue.R_PC] + pc_offset;
+          var address = register[RegisterAddress.R_PC]! + pc_offset;
           address &= 0xFFFF;
 
-          mem_write(address, register[RegisterValue.values[r0]]);
+          mem_write(address, register[RegisterAddress.values[r0]]!);
         }
         break;
       case Opcode.OP_JSR:
         {
           var pc_flag = (instr >> 11) & 0x1;
-          register[RegisterValue.R_R7] = register[RegisterValue.R_PC];
+          register[RegisterAddress.R_R7] = register[RegisterAddress.R_PC]!;
 
           if (pc_flag == 1) {
             var pc_offset = sign_extend(instr & 0x7FF, 11);
-            register[RegisterValue.R_PC] += pc_offset;
-            register[RegisterValue.R_PC] &= 0xFFFF;
+            register[RegisterAddress.R_PC] = register[RegisterAddress.R_PC]! + pc_offset;
+            register[RegisterAddress.R_PC] = register[RegisterAddress.R_PC]! & 0xFFFF;
           } else {
             var r = (instr >> 6) & 0x7;
-            register[RegisterValue.R_PC] = register[RegisterValue.values[r]];
+            register[RegisterAddress.R_PC] = register[RegisterAddress.values[r]]!;
           }
         }
         break;
@@ -195,10 +196,10 @@ void main(List<String> arguments) {
 
           if (imm_flag == 1) {
             var imm5 = sign_extend(instr & 0x1F, 5);
-            register[RegisterValue.values[r0]] = register[RegisterValue.values[r1]] & imm5;
+            register[RegisterAddress.values[r0]] = register[RegisterAddress.values[r1]]! & imm5;
           } else {
             var r2 = instr & 0x7;
-            register[RegisterValue.values[r0]] = register[RegisterValue.values[r1]] & register[RegisterValue.values[r2]];
+            register[RegisterAddress.values[r0]] = register[RegisterAddress.values[r1]]! & register[RegisterAddress.values[r2]]!;
           }
 
           update_flags(r0);
@@ -209,10 +210,10 @@ void main(List<String> arguments) {
           var r0 = (instr >> 9) & 0x7;
           var r1 = (instr >> 6) & 0x7;
           var offset = sign_extend(instr & 0x3F, 6);
-          var address = register[RegisterValue.values[r1]] + offset;
+          var address = register[RegisterAddress.values[r1]]! + offset;
           address &= 0xFFFF;
 
-          register[RegisterValue.values[r0]] = mem_read(address);
+          register[RegisterAddress.values[r0]] = mem_read(address);
           update_flags(r0);
         }
         break;
@@ -222,12 +223,12 @@ void main(List<String> arguments) {
           var r1 = (instr >> 6) & 0x7;
           var offset = sign_extend(instr & 0x3F, 6);
 
-          var address = register[RegisterValue.values[r1]] + offset;
+          var address = register[RegisterAddress.values[r1]]! + offset;
           address &= 0xFFFF;
 
           mem_write(
               address,
-              register[RegisterValue.values[r0]]
+              register[RegisterAddress.values[r0]]!
           );
         }
         break;
@@ -236,7 +237,7 @@ void main(List<String> arguments) {
           var r0 = (instr >> 9) & 0x7;
           var r1 = (instr >> 6) & 0x7;
 
-          register[RegisterValue.values[r0]] = (~register[RegisterValue.values[r1]] & 0xFFFF);
+          register[RegisterAddress.values[r0]] = (~register[RegisterAddress.values[r1]]! & 0xFFFF);
           update_flags(r0);
         }
         break;
@@ -244,10 +245,10 @@ void main(List<String> arguments) {
         {
           var r0 = (instr >> 9) & 0x7;
           var pc_offset = sign_extend(instr & 0x1FF, 9);
-          var address = register[RegisterValue.R_PC] + pc_offset;
+          var address = register[RegisterAddress.R_PC]! + pc_offset;
           address &= 0xFFFF;
 
-          register[RegisterValue.values[r0]] = mem_read(mem_read(address));
+          register[RegisterAddress.values[r0]] = mem_read(mem_read(address));
           update_flags(r0);
         }
         break;
@@ -255,19 +256,19 @@ void main(List<String> arguments) {
         {
           var r = (instr >> 9) & 0x7;
           var pc_offset = sign_extend(instr & 0x1FF, 9);
-          var address = register[RegisterValue.R_PC] + pc_offset;
+          var address = register[RegisterAddress.R_PC]! + pc_offset;
           address &= 0xFFFF;
 
           mem_write(
               mem_read(address),
-              register[RegisterValue.values[r]]
+              register[RegisterAddress.values[r]]!
           );
         }
         break;
       case Opcode.OP_JMP:
         {
           var r = (instr >> 6) & 0x7;
-          register[RegisterValue.R_PC] = register[RegisterValue.values[r]];
+          register[RegisterAddress.R_PC] = register[RegisterAddress.values[r]]!;
         }
         break;
       case Opcode.OP_LEA:
@@ -275,8 +276,8 @@ void main(List<String> arguments) {
           var r0 = (instr >> 9) & 0x7;
           var pc_offset = sign_extend(instr & 0x1FF, 9);
 
-          register[RegisterValue.values[r0]] = register[RegisterValue.R_PC] + pc_offset;
-          register[RegisterValue.values[r0]] &= 0xFFFF;
+          register[RegisterAddress.values[r0]] = register[RegisterAddress.R_PC]! + pc_offset;
+          register[RegisterAddress.values[r0]] = register[RegisterAddress.values[r0]]! & 0xFFFF;
           update_flags(r0);
         }
         break;
@@ -286,17 +287,17 @@ void main(List<String> arguments) {
           switch (trap) {
             case Trap.TRAP_GETC:
               {
-                register[RegisterValue.R_R0] = stdin.readByteSync();
+                register[RegisterAddress.R_R0] = stdin.readByteSync();
               }
               break;
             case Trap.TRAP_OUT:
               {
-                stdout.write(String.fromCharCode(register[RegisterValue.R_R0] & 0x7F));
+                stdout.write(String.fromCharCode(register[RegisterAddress.R_R0]! & 0x7F));
               }
               break;
             case Trap.TRAP_PUTS:
               {
-                var offset = register[RegisterValue.R_R0];
+                var offset = register[RegisterAddress.R_R0]!;
                 var char = mem_read(offset++) & 0x7F;
 
                 while (char != 0x0000) {
@@ -310,12 +311,12 @@ void main(List<String> arguments) {
                 print('Enter a character: ');
                 var char = stdin.readByteSync();
                 stdout.write(String.fromCharCode(char));
-                register[RegisterValue.R_R0] = char;
+                register[RegisterAddress.R_R0] = char;
               }
               break;
             case Trap.TRAP_PUTSP:
               {
-                var offset = register[RegisterValue.R_R0];
+                var offset = register[RegisterAddress.R_R0]!;
                 var val = mem_read(offset++);
 
                 while (val != 0) {
@@ -393,11 +394,11 @@ int sign_extend(int x, int bit_count) {
 }
 
 void update_flags(int r) {
-  if(register[RegisterValue.values[r]] == 0) {
-    register[RegisterValue.R_COND] = ConditionFlags.FL_ZRO.value();
-  } else if (register[RegisterValue.values[r]] >> 15 == 1) {
-    register[RegisterValue.R_COND] = ConditionFlags.FL_NEG.value();
+  if(register[RegisterAddress.values[r]] == 0) {
+    register[RegisterAddress.R_COND] = ConditionFlags.FL_ZRO.value();
+  } else if (register[RegisterAddress.values[r]]! >> 15 == 1) {
+    register[RegisterAddress.R_COND] = ConditionFlags.FL_NEG.value();
   } else {
-    register[RegisterValue.R_COND] = ConditionFlags.FL_POS.value();
+    register[RegisterAddress.R_COND] = ConditionFlags.FL_POS.value();
   }
 }
